@@ -5,9 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Artisan;
 use App\Models\Tenant;
-use App\Models\User;
 
 class AuthController extends Controller
 {
@@ -24,24 +22,25 @@ class AuthController extends Controller
         ]);
 
         // 1️⃣ Create tenant record in main DB
-        $tenant = Tenant::create(['name' => $request->company_name]);
+        $tenant = Tenant::create([
+            'name' => $request->company_name
+        ]);
 
         // 2️⃣ Generate tenant database name
         $dbName = 'tenant_' . preg_replace('/\W+/', '_', strtolower($tenant->name));
 
-        // 3️⃣ Create DB on Aiven
+        // 3️⃣ Create tenant database
         DB::statement("CREATE DATABASE IF NOT EXISTS `$dbName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
 
-        // 4️⃣ Configure dynamic tenant connection
+        // 4️⃣ Set tenant connection dynamically
         config([
-            'database.connections.tenant.host' => env('TENANT_DB_HOST'),
-            'database.connections.tenant.port' => env('TENANT_DB_PORT'),
-            'database.connections.tenant.username' => env('TENANT_DB_USERNAME'),
-            'database.connections.tenant.password' => env('TENANT_DB_PASSWORD'),
             'database.connections.tenant.database' => $dbName,
         ]);
 
-        // 5️⃣ Create tenant users table dynamically
+        DB::purge('tenant');
+        DB::reconnect('tenant');
+
+        // 5️⃣ Create users table inside tenant DB
         DB::connection('tenant')->statement("
             CREATE TABLE IF NOT EXISTS users (
                 id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -54,7 +53,7 @@ class AuthController extends Controller
             )
         ");
 
-        // 6️⃣ Insert admin user in tenant DB
+        // 6️⃣ Insert admin user
         $adminId = DB::connection('tenant')->table('users')->insertGetId([
             'name' => $request->admin_name,
             'email' => $request->admin_email,
@@ -65,81 +64,50 @@ class AuthController extends Controller
         ]);
 
         return response()->json([
-            'message' => 'Tenant created & admin added',
+            'message' => 'Tenant created successfully',
             'tenant_id' => $tenant->id,
-            'tenant_db' => $dbName,
+            'tenant_database' => $dbName,
             'admin_id' => $adminId
         ]);
     }
 
     /**
-     * Tenant Admin adds employee
-     */
-    public function register(Request $request)
-    {
-        $request->validate([
-            'name'=>'required|string',
-            'email'=>'required|email',
-            'password'=>'required|string|min:6',
-            'role'=>'required|in:admin,user',
-            'company_name'=>'required|string'
-        ]);
-
-        $dbName = 'tenant_' . preg_replace('/\W+/', '_', strtolower($request->company_name));
-        config(['database.connections.tenant.database' => $dbName]);
-
-        $userId = DB::connection('tenant')->table('users')->insertGetId([
-            'name'=>$request->name,
-            'email'=>$request->email,
-            'password'=>Hash::make($request->password),
-            'role'=>$request->role,
-            'created_at'=>now(),
-            'updated_at'=>now()
-        ]);
-
-        return response()->json(['message'=>'Employee added','user_id'=>$userId]);
-    }
-
-    /**
-     * Tenant login
+     * Tenant Login
      */
     public function login(Request $request)
     {
         $request->validate([
-            'email'=>'required|email',
-            'password'=>'required|string',
-            'company_name'=>'required|string'
+            'email' => 'required|email',
+            'password' => 'required|string',
+            'company_name' => 'required|string'
         ]);
 
         $dbName = 'tenant_' . preg_replace('/\W+/', '_', strtolower($request->company_name));
-        config(['database.connections.tenant.database'=>$dbName]);
 
-        $user = DB::connection('tenant')->table('users')
-                    ->where('email', $request->email)->first();
+        config(['database.connections.tenant.database' => $dbName]);
+        DB::purge('tenant');
+        DB::reconnect('tenant');
 
-        if(!$user || !Hash::check($request->password,$user->password)) {
-            return response()->json(['message'=>'Invalid credentials'],401);
+        $user = DB::connection('tenant')
+                    ->table('users')
+                    ->where('email', $request->email)
+                    ->first();
+
+        if (!$user || !Hash::check($request->password, $user->password)) {
+            return response()->json(['message' => 'Invalid credentials'], 401);
         }
 
-        $token = $user->id.'_token_'.now()->timestamp;
-
         return response()->json([
-            'message'=>'Login successful',
-            'token'=>$token,
-            'user'=>[
-                'id'=>$user->id,
-                'name'=>$user->name,
-                'email'=>$user->email,
-                'role'=>$user->role
-            ]
+            'message' => 'Login successful',
+            'user' => $user
         ]);
     }
 
     /**
      * Logout
      */
-    public function logout(Request $request)
+    public function logout()
     {
-        return response()->json(['message'=>'Logged out successfully']);
+        return response()->json(['message' => 'Logged out successfully']);
     }
 }
