@@ -3,12 +3,22 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use App\Models\Tenant;
+use App\Services\TenantManager;
+use App\Services\AuthService;
+use Illuminate\Support\Facades\DB;
 
 class AuthController extends Controller
 {
+    protected $tenantManager;
+    protected $authService;
+
+    public function __construct(TenantManager $tenantManager, AuthService $authService)
+    {
+        $this->tenantManager = $tenantManager;
+        $this->authService = $authService;
+    }
+
     /**
      * Product Owner creates a tenant + admin
      */
@@ -21,52 +31,23 @@ class AuthController extends Controller
             'admin_password' => 'required|string|min:6',
         ]);
 
-        // 1️⃣ Create tenant record in main DB
-        $tenant = Tenant::create([
-            'name' => $request->company_name
-        ]);
+        // 1. Create global tenant record
+        $tenant = Tenant::create(['name' => $request->company_name]);
 
-        // 2️⃣ Generate tenant database name
-        $dbName = 'tenant_' . preg_replace('/\W+/', '_', strtolower($tenant->name));
+        // 2. Create tenant database and run migrations via Service
+        $this->tenantManager->createTenant($request->company_name);
 
-        // 3️⃣ Create tenant database
-        DB::statement("CREATE DATABASE IF NOT EXISTS `$dbName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-
-        // 4️⃣ Set tenant connection dynamically
-        config([
-            'database.connections.tenant.database' => $dbName,
-        ]);
-
-        DB::purge('tenant');
-        DB::reconnect('tenant');
-
-        // 5️⃣ Create users table inside tenant DB
-        DB::connection('tenant')->statement("
-            CREATE TABLE IF NOT EXISTS users (
-                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                password VARCHAR(255) NOT NULL,
-                role VARCHAR(50) NOT NULL,
-                created_at TIMESTAMP NULL,
-                updated_at TIMESTAMP NULL
-            )
-        ");
-
-        // 6️⃣ Insert admin user
-        $adminId = DB::connection('tenant')->table('users')->insertGetId([
+        // 3. Create the admin user in the new tenant database
+        $adminId = $this->authService->registerTenantUser([
             'name' => $request->admin_name,
             'email' => $request->admin_email,
-            'password' => Hash::make($request->admin_password),
+            'password' => $request->admin_password,
             'role' => 'admin',
-            'created_at' => now(),
-            'updated_at' => now(),
         ]);
 
         return response()->json([
-            'message' => 'Tenant created successfully',
+            'message' => 'Tenant and Admin created successfully',
             'tenant_id' => $tenant->id,
-            'tenant_database' => $dbName,
             'admin_id' => $adminId
         ]);
     }
@@ -82,32 +63,53 @@ class AuthController extends Controller
             'company_name' => 'required|string'
         ]);
 
-        $dbName = 'tenant_' . preg_replace('/\W+/', '_', strtolower($request->company_name));
+        // Switch to the correct tenant database
+        $this->tenantManager->switchToTenant($request->company_name);
 
-        config(['database.connections.tenant.database' => $dbName]);
-        DB::purge('tenant');
-        DB::reconnect('tenant');
+        // Authenticate user
+        $authData = $this->authService->loginTenantUser($request->email, $request->password);
 
-        $user = DB::connection('tenant')
-                    ->table('users')
-                    ->where('email', $request->email)
-                    ->first();
-
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        if (!$authData) {
             return response()->json(['message' => 'Invalid credentials'], 401);
         }
 
         return response()->json([
             'message' => 'Login successful',
-            'user' => $user
+            'user' => $authData['user'],
+            'token' => $authData['token'],
+            'company_name' => $request->company_name
+        ]);
+    }
+
+    /**
+     * Register (Add Employee)
+     */
+    public function register(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string',
+            'email' => 'required|email',
+            'password' => 'required|string|min:6',
+            'role' => 'required|string',
+        ]);
+
+        $userId = $this->authService->registerTenantUser($request->all());
+
+        return response()->json([
+            'message' => 'User registered successfully',
+            'user_id' => $userId
         ]);
     }
 
     /**
      * Logout
      */
-    public function logout()
+    public function logout(Request $request)
     {
+        if ($token = $request->bearerToken()) {
+            $this->authService->revokeTenantToken($token);
+        }
+
         return response()->json(['message' => 'Logged out successfully']);
     }
 }
