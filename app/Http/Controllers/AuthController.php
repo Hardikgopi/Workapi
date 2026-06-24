@@ -159,7 +159,7 @@ class AuthController extends Controller
             'otp' => 'required'
         ]);
 
-        if ($request->email !== 'gopinathm577@gmail.com') {
+        if ($request->email !== 'rohitgopi4533@gmail.com') {
             return response()->json([
                 'message' => 'Unauthorized email'
             ], 403);
@@ -185,7 +185,7 @@ class AuthController extends Controller
             'email' => 'required|email'
         ]);
 
-        $allowedEmail = 'gopinathm577@gmail.com';
+        $allowedEmail = 'rohitgopi4533@gmail.com';
 
         if ($request->email !== $allowedEmail) {
             return response()->json([
