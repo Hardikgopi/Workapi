@@ -35,4 +35,15 @@ return [
         ],
     ],
 
+    'firebase' => [
+        'server_key' => env('FIREBASE_SERVER_KEY'),
+    ],
+
+    'razorpay' => [
+        'key_id' => env('RAZORPAY_KEY_ID'),
+        'key_secret' => env('RAZORPAY_KEY_SECRET'),
+        'callback_url' => env('RAZORPAY_CALLBACK_URL'),
+        'callback_method' => env('RAZORPAY_CALLBACK_METHOD', 'get'),
+    ],
+
 ];

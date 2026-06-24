@@ -60,8 +60,7 @@ class TenantTokenMiddleware
             return response()->json(['message' => 'User not found'], 401);
         }
 
-        // Manually set the user on the request if needed, or just pass along
-        $request->merge(['tenant_user' => $user]);
+        $request->attributes->set('tenant_user', $user);
 
         return $next($request);
     }

@@ -7,6 +7,8 @@ use App\Models\Tenant;
 use App\Services\TenantManager;
 use App\Services\AuthService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Mail;
 
 class AuthController extends Controller
 {
@@ -111,5 +113,98 @@ class AuthController extends Controller
         }
 
         return response()->json(['message' => 'Logged out successfully']);
+    }
+
+    /**
+     * Update FCM Token
+     */
+    public function updateFcmToken(Request $request)
+    {
+        $request->validate([
+            'fcm_token' => 'required|string',
+        ]);
+
+        $user = $request->attributes->get('tenant_user');
+
+        if (!$user) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        DB::connection('tenant')
+            ->table('users')
+            ->where('id', $user->id)
+            ->update(['fcm_token' => $request->fcm_token]);
+
+        return response()->json(['message' => 'FCM token updated successfully']);
+    }
+
+    /**
+     * List all tenant users (for dropdowns like Assigned To)
+     */
+    public function listUsers(Request $request)
+    {
+        $users = DB::connection('tenant')
+            ->table('users')
+            ->select('id', 'name', 'email', 'role')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json($users);
+    }
+
+    public function verifyOtp(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'otp' => 'required'
+        ]);
+
+        if ($request->email !== 'gopinathm577@gmail.com') {
+            return response()->json([
+                'message' => 'Unauthorized email'
+            ], 403);
+        }
+
+        $storedOtp = cache()->get('owner_otp');
+
+        if (!$storedOtp || $storedOtp != $request->otp) {
+            return response()->json([
+                'message' => 'Invalid OTP'
+            ], 400);
+        }
+
+        cache()->forget('owner_otp');
+
+        return response()->json([
+            'message' => 'OTP verified'
+        ]);
+    }
+    public function sendOtp(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email'
+        ]);
+
+        $allowedEmail = 'gopinathm577@gmail.com';
+
+        if ($request->email !== $allowedEmail) {
+            return response()->json([
+                'message' => 'Unauthorized email address'
+            ], 403);
+        }
+
+        $otp = rand(100000, 999999);
+
+        cache()->put('owner_otp', $otp, now()->addMinutes(5));
+
+        // Send email
+        Mail::raw("Your OTP is: $otp", function ($message) use ($allowedEmail) {
+            $message->to($allowedEmail)
+                    ->subject('Owner Login OTP');
+        });
+
+        return response()->json([
+            'message' => 'OTP sent successfully'
+        ]);
     }
 }
